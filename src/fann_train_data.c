@@ -67,6 +67,7 @@ FANN_EXTERNAL int FANN_API fann_save_train_to_fixed(struct fann_train_data *data
  */
 FANN_EXTERNAL void FANN_API fann_destroy_train(struct fann_train_data *data)
 {
+    unsigned int i;
 	if(data == NULL)
 		return;
 	if(data->input != NULL)
@@ -75,6 +76,10 @@ FANN_EXTERNAL void FANN_API fann_destroy_train(struct fann_train_data *data)
 		fann_safe_free(data->output[0]);
 	fann_safe_free(data->input);
 	fann_safe_free(data->output);
+    for(i = 0; i < data->num_file; i++)
+        fann_safe_free(data->file[i]);
+    fann_safe_free(data->file);
+    fann_safe_free(data->file_format);
 	fann_safe_free(data);
 }
 
@@ -863,6 +868,10 @@ FANN_EXTERNAL struct fann_train_data * FANN_API fann_create_train(unsigned int n
 		data->output[i] = data_output;
 		data_output += num_output;
 	}
+
+    data->file = NULL;
+    data->file_format = NULL;
+    data->num_file = 0;
 	return data;
 }
 
@@ -929,6 +938,106 @@ FANN_EXTERNAL struct fann_train_data * FANN_API fann_create_train_from_callback(
 
     return data;
 } 
+
+FANN_EXTERNAL struct fann_train_data *fann_create_train_from_in_file_data(const char *configuration_file, enum fann_in_file_data_format_enum format)
+{
+	unsigned int i;
+	struct fann_train_data *data =
+		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+
+	if(data == NULL)
+	{
+		fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) data);
+
+    data->input = NULL;
+    data->output = NULL;
+
+    data->file = (char **) malloc(sizeof(char *));
+    if(data->file == NULL)
+    {
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+
+    data->file[0] = (char *) calloc(strlen(configuration_file) + 1, sizeof(char));
+    if(data->file[0] == NULL)
+    {
+        free(data->file);
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+    strcpy(data->file[0], configuration_file);
+
+    data->file_format = (enum fann_in_file_data_format_enum *) malloc(sizeof(enum fann_in_file_data_format_enum));
+    if(data->file_format == NULL)
+    {
+        free(data->file[0]);
+        free(data->file);
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+
+    data->file_format[0] = format;
+    data->num_file = 1;
+
+    if(format == FANN_TEXT_FORMAT_IN_FILE_DATA)
+    {
+        FILE *file = fopen(configuration_file, "r");
+        if(file == NULL)
+        {
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+            return NULL;
+        }
+
+        if(fscanf(file, "%u %u %u\n", &data->num_data, &data->num_input, &data->num_output) != 3)
+        {
+            fclose(file);
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_READ_TD, configuration_file, 1);
+            return NULL;
+        }
+
+        fclose(file);
+    }
+    else if (format == FANN_BINARY_FORMAT_IN_FILE_DATA)
+    {
+        FILE *file = fopen(configuration_file, "rb");
+        if(file == NULL)
+        {
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+            return NULL;
+        }
+
+        if(fread((char *)&data->num_data, sizeof(unsigned int), 1, file) != 1
+           || fread((char *)&data->num_input, sizeof(unsigned int), 1, file) != 1
+           || fread((char *)&data->num_output, sizeof(unsigned int), 1, file) != 1)
+        {
+            fclose(file);
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_READ_TD, configuration_file, 1);
+            return NULL;
+        }
+
+        fclose(file);
+    }
+    else
+    {
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+        return NULL;
+    }
+
+    return data;
+}
 
 FANN_EXTERNAL fann_type * FANN_API fann_get_train_input(struct fann_train_data * data, unsigned int position)
 {
