@@ -126,6 +126,8 @@ FANN_EXTERNAL void FANN_API fann_scale_data_to_range(fann_type ** data, unsigned
 
 struct fann_train_data *fann_merge_in_file_data(struct fann_train_data *data1, struct fann_train_data *data2);
 
+struct fann_train_data *fann_duplicate_in_file_data(struct fann_train_data *data);
+
 /* called fann_max, in order to not interferre with predefined versions of max */
 #define fann_max(x, y) (((x) > (y)) ? (x) : (y))
 #define fann_min(x, y) (((x) < (y)) ? (x) : (y))

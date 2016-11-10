@@ -640,9 +640,11 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_duplicate_train_data(struct 
 {
 	unsigned int i;
 	fann_type *data_input, *data_output;
-	struct fann_train_data *dest =
-		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	struct fann_train_data *dest = fann_duplicate_in_file_data(data);
+    if(dest != NULL)
+        return dest;
 
+	dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
 	if(dest == NULL)
 	{
 		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
@@ -697,6 +699,67 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_duplicate_train_data(struct 
 		data_output += dest->num_output;
 	}
 	return dest;
+}
+
+/*
+ * INTERNAL FUNCTION return a copy of a fann_train_data struct (in-file data)
+ */
+struct fann_train_data *fann_duplicate_in_file_data(struct fann_train_data *data)
+{
+    unsigned int i;
+	struct fann_train_data *dest;
+
+    if(data->input != NULL || data->output != NULL)
+        return NULL;
+
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	if(dest == NULL)
+	{
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) dest);
+	dest->error_log = data->error_log;
+
+	dest->num_data = data->num_data;
+	dest->num_input = data->num_input;
+	dest->num_output = data->num_output;
+    dest->input = NULL;
+    dest->output = NULL;
+
+    if(data->num_file == 0)
+    {
+        dest->file = NULL;
+        dest->file_format = NULL;
+        dest->num_file = 0;
+        return dest;
+    }
+
+    dest->file = (char **) calloc(data->num_file, sizeof(char *));
+    if(dest->file == NULL)
+    {
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		fann_destroy_train(dest);
+		return NULL;
+    }
+
+    dest->file_format = (enum fann_in_file_data_format_enum *) calloc(data->num_file, sizeof(enum fann_in_file_data_format_enum));
+    if(dest->file_format == NULL)
+    {
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		fann_destroy_train(dest);
+		return NULL;
+    }
+
+    dest->num_file = data->num_file;
+    for(i = 0; i < data->num_file; i++)
+    {
+        dest->file[i] = (char *) calloc(strlen(data->file[i]) + 1, sizeof(char));
+        strcpy(dest->file[i], data->file[i]);
+    }
+    memcpy(dest->file_format, data->file_format, data->num_file * sizeof(enum fann_in_file_data_format_enum));
+    return dest;
 }
 
 FANN_EXTERNAL struct fann_train_data *FANN_API fann_subset_train_data(struct fann_train_data
