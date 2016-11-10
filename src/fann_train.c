@@ -536,6 +536,16 @@ void fann_update_slopes_batch(struct fann *ann, struct fann_layer *layer_begin,
 }
 
 /* INTERNAL FUNCTION
+ */
+void fann_default_train_strategy(struct fann *ann, fann_type *input, fann_type *output)
+{
+    fann_run(ann, input);
+    fann_compute_MSE(ann, output);
+    fann_backpropagate_MSE(ann);
+    fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
+}
+
+/* INTERNAL FUNCTION
    Clears arrays used for training before a new training session.
    Also creates the arrays that do not exist yet.
  */

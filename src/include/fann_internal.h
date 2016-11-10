@@ -84,6 +84,9 @@ void fann_backpropagate_MSE(struct fann *ann);
 void fann_update_weights(struct fann *ann);
 void fann_update_slopes_batch(struct fann *ann, struct fann_layer *layer_begin,
 							  struct fann_layer *layer_end);
+void fann_default_train_strategy(struct fann *ann, fann_type *input, fann_type *output);
+void fann_apply_strategy_to_data(struct fann *ann, struct fann_train_data *data,
+                                void (*strategy)( struct fann *, fann_type *, fann_type *));
 void fann_update_weights_quickprop(struct fann *ann, unsigned int num_data,
 								   unsigned int first_weight, unsigned int past_end);
 void fann_update_weights_batch(struct fann *ann, unsigned int num_data, unsigned int first_weight,

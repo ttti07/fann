@@ -118,13 +118,7 @@ float fann_train_epoch_quickprop(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_quickprop(ann, data->num_data, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -144,14 +138,7 @@ float fann_train_epoch_irpropm(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_irpropm(ann, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -171,14 +158,7 @@ float fann_train_epoch_sarprop(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_sarprop(ann, ann->sarprop_epoch, 0, ann->total_connections);
 
 	++(ann->sarprop_epoch);
@@ -195,14 +175,7 @@ float fann_train_epoch_batch(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_batch(ann, data->num_data, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -217,12 +190,146 @@ float fann_train_epoch_incremental(struct fann *ann, struct fann_train_data *dat
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i != data->num_data; i++)
-	{
-		fann_train(ann, data->input[i], data->output[i]);
-	}
+    fann_apply_strategy_to_data(ann, data, fann_train);
 
 	return fann_get_MSE(ann);
+}
+
+/* INTERNAL FUNCTION
+   Apply strategy function for each (input, output) data
+ */
+void fann_apply_strategy_to_data(struct fann *ann, struct fann_train_data *data, void (*strategy)( struct fann *, fann_type *, fann_type *))
+{
+    unsigned int fidx;
+    unsigned int didx;
+    unsigned int i;
+    unsigned int j;
+
+    fann_type *input;
+    fann_type *output;
+
+    if(data->input != NULL && data->output != NULL)
+    {
+        for(i = 0; i < data->num_data; i++)
+            strategy(ann, data->input[i], data->output[i]);
+
+        return;
+    }
+    else if(data->num_file == 0)
+        return;
+
+    input = (fann_type *) calloc(data->num_input, sizeof(fann_type));
+    if(input == NULL)
+    {
+        fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+        return;
+    }
+    output = (fann_type *) calloc(data->num_output, sizeof(fann_type));
+    if(output == NULL)
+    {
+        fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+        free(input);
+        return;
+    }
+
+    for(fidx = 0; fidx < data->num_file; fidx++)
+    {
+        FILE *file;
+        if(data->file_format[fidx] == FANN_TEXT_FORMAT_IN_FILE_DATA)
+        {
+            unsigned int dummy_a, dummy_b, dummy_c;
+            file = fopen(data->file[fidx], "r");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                free(input);
+                free(output);
+                return;
+            }
+            if(fscanf(file, "%u %u %u\n", &dummy_a, &dummy_b, &dummy_c) != 3)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                free(input);
+                free(output);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &input[j]) != 1)
+                    {
+                        fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                        free(input);
+                        free(output);
+                        fclose(file);
+                        return;
+                    }
+                }
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &output[i]) != 1)
+                    {
+                        fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                        free(input);
+                        free(output);
+                        fclose(file);
+                        return;
+                    }
+                }
+            }
+
+            strategy(ann, input, output);
+        }
+        else if(data->file_format[fidx] == FANN_BINARY_FORMAT_IN_FILE_DATA)
+        {
+            file = fopen(data->file[fidx], "rb");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                free(input);
+                free(output);
+                return;
+            }
+            if(fseek(file, sizeof(unsigned int) * 3, SEEK_SET) != 0)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                free(input);
+                free(output);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                if(fread(input, sizeof(fann_type), data->num_input, file) != data->num_input)
+                {
+                    fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    free(input);
+                    free(output);
+                    fclose(file);
+                    return;
+                }
+                if(fread(output, sizeof(fann_type), data->num_output, file) != data->num_output)
+                {
+                    fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    free(input);
+                    free(output);
+                    fclose(file);
+                    return;
+                }
+
+                strategy(ann, input, output);
+            }
+        }
+
+        fclose(file);
+    }
+
+    free(input);
+    free(output);
 }
 
 /*
