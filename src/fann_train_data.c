@@ -492,9 +492,11 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_merge_train_data(struct fann
 {
 	unsigned int i;
 	fann_type *data_input, *data_output;
-	struct fann_train_data *dest =
-		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	struct fann_train_data *dest = fann_merge_in_file_data(data1, data2);
+    if(dest != NULL)
+        return dest;
 
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
 	if(dest == NULL)
 	{
 		fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
@@ -559,6 +561,75 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_merge_train_data(struct fann
 		data_output += dest->num_output;
 	}
 	return dest;
+}
+
+/*
+ * INTERNAL FUNCTION Merges in-file data into a single struct
+ */
+struct fann_train_data *fann_merge_in_file_data(struct fann_train_data *data1, struct fann_train_data *data2)
+{
+    struct fann_train_data *dest;
+
+    if(data1->input != NULL || data1->output != NULL || data2->input != NULL || data2->output != NULL)
+        return NULL;
+    if (data1->num_file == 0 && data2->num_file == 0)
+        return NULL;
+
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	if(dest == NULL)
+	{
+		fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) dest);
+	dest->error_log = data1->error_log;
+
+    dest->num_file = data1->num_file+data2->num_file;
+    if(dest->num_file == 0)
+    {
+        dest->file = NULL;
+        dest->file_format = NULL;
+        return dest;
+    }
+
+    dest->file = (char **) calloc(dest->num_file, sizeof(char *));
+    if(dest->file == NULL)
+    {
+        fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+        fann_destroy_train(dest);
+        return NULL;
+    }
+
+    dest->file_format = (enum fann_in_file_data_format_enum *) calloc(dest->num_file, sizeof(enum fann_in_file_data_format_enum));
+    if(dest->file_format == NULL)
+    {
+        fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+        fann_destroy_train(dest);
+        return NULL;
+    }
+
+    if(data1->num_file != 0)
+    {
+        unsigned int i;
+        for(i = 0; i < data1->num_file; i++)
+        {
+            dest->file[i] = (char *) calloc(strlen(data1->file[i]) + 1, sizeof(char));
+            strcpy(dest->file[i], data1->file[i]);
+        }
+        memcpy(dest->file_format, data1->file_format, data1->num_file * sizeof(enum fann_in_file_data_format_enum));
+    }
+    if(data2->num_file != 0)
+    {
+        unsigned int i;
+        for(i = 0; i < data2->num_file; i++)
+        {
+            dest->file[data1->num_file + i] = (char *) calloc(strlen(data2->file[i]) + 1, sizeof(char));
+            strcpy(dest->file[data1->num_file + i], data2->file[i]);
+        }
+        memcpy(dest->file_format + data1->num_file, data2->file_format, data2->num_file * sizeof(enum fann_in_file_data_format_enum));
+    }
+    return dest;
 }
 
 /*
