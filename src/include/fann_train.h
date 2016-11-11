@@ -403,7 +403,6 @@ FANN_EXTERNAL fann_type * FANN_API fann_get_train_output(struct fann_train_data 
  */ 
 FANN_EXTERNAL void FANN_API fann_shuffle_train_data(struct fann_train_data *train_data);
 
-#ifndef FIXEDFANN
 
 /* Function: fann_get_min_train_input
 
@@ -437,6 +436,7 @@ FANN_EXTERNAL fann_type FANN_API fann_get_min_train_output(struct fann_train_dat
 */
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_output(struct fann_train_data *train_data);
 
+#ifndef FIXEDFANN
 
 /* Function: fann_scale_train
 

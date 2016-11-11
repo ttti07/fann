@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <math.h>
 
 #include "config.h"
 #include "fann.h"
@@ -477,33 +478,195 @@ void fann_get_min_max_data(fann_type ** data, unsigned int num_data, unsigned in
 	}
 }
 
+/*
+ * INTERNAL FUNCTION calculates min and max of in-file train data
+ */
+void fann_get_min_max_in_file_data(struct fann_train_data *data, fann_type *input_min, fann_type *input_max, fann_type *output_min, fann_type *output_max)
+{
+    unsigned int fidx;
+    unsigned int didx;
+
+    *input_min = (fann_type)INFINITY;
+    *input_max = (fann_type)-INFINITY;
+    *output_min = (fann_type)INFINITY;
+    *output_max = (fann_type)-INFINITY;
+
+    for(fidx = 0; fidx < data->num_file; fidx++)
+    {
+        FILE *file;
+
+        if(data->file_format[fidx] == FANN_TEXT_FORMAT_IN_FILE_DATA)
+        {
+            unsigned int dummy_a, dummy_b, dummy_c;
+            fann_type value;
+            unsigned int j;
+
+            file = fopen(data->file[fidx], "r");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                return;
+            }
+            if(fscanf(file, "%u %u %u\n", &dummy_a, &dummy_b, &dummy_c) != 3)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &value) != 1)
+                    {
+                        fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx * 2);
+                        fclose(file);
+                        return;
+                    }
+
+                    if(value < *input_min)
+                        *input_min = value;
+                    else if(*input_max < value)
+                        *input_max = value;
+                }
+
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &value) != 1)
+                    {
+                        fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx * 2 + 1);
+                        fclose(file);
+                        return;
+                    }
+
+                    if(value < *output_min)
+                        *output_min = value;
+                    else if(*output_max < value)
+                        *output_max = value;
+                }
+            }
+
+            fclose(file);
+        }
+        else if(data->file_format[fidx] == FANN_BINARY_FORMAT_IN_FILE_DATA)
+        {
+            fann_type *input;
+            fann_type *output;
+            unsigned int j;
+
+            file = fopen(data->file[fidx], "rb");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                return;
+            }
+            if(fseek(file, sizeof(unsigned int) * 3, SEEK_SET) != 0)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                fclose(file);
+                return;
+            }
+
+            input = (fann_type *) calloc(data->num_input, sizeof(fann_type));
+            if(input == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+                fclose(file);
+                return;
+            }
+
+            output = (fann_type *) calloc(data->num_output, sizeof(fann_type));
+            if(output == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+                free(input);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                if(fread((char *)input, sizeof(fann_type), data->num_input, file) != data->num_input)
+                {
+                    fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    fclose(file);
+                    free(input);
+                    free(output);
+                    return;
+                }
+
+                if(fread((char *)output, sizeof(fann_type), data->num_output, file) != data->num_output)
+                {
+                    fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    fclose(file);
+                    free(input);
+                    free(output);
+                    return;
+                }
+
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(input[j] < *input_min)
+                        *input_min = input[j];
+                    else if(*input_max < input[j])
+                        *input_max = input[j];
+                }
+
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(output[j] < *output_min)
+                        *output_min = output[j];
+                    else if(*output_max < output[j])
+                        *output_max = output[j];
+                }
+            }
+
+            free(input);
+            free(output);
+            fclose(file);
+        }
+    }
+}
 
 FANN_EXTERNAL fann_type FANN_API fann_get_min_train_input(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &min, &max);
-    return min;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &input_min, &input_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return input_min;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_input(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &min, &max);
-    return max;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &input_min, &input_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return input_max;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_min_train_output(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &min, &max);
-    return min;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &output_min, &output_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return output_min;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_output(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &min, &max);
-    return max;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &output_min, &output_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return output_max;
 }
 
 /*
