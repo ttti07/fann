@@ -38,6 +38,20 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  			is supported by <FANN Cascade Training>.
  */
 
+/* Enums: fann_in_file_data_format_enum
+
+   fann_train_data can train on in-file data directly, without loading it to memory. This is useful especially for large size training data. In-file data can be trained, merged, duplicated, but cannot be scaled, shuffled yet.
+
+   FANN_TEXT_FORMAT_IN_FILE_DATA - The same format as fann/datasets/[*].train files
+   FANN_BINARY_FORMAT_IN_FILE_DATA - Serialized data, with the same structure as text format. Serialized data can be read/written much faster.
+
+ */
+enum fann_in_file_data_format_enum
+{
+    FANN_TEXT_FORMAT_IN_FILE_DATA,
+    FANN_BINARY_FORMAT_IN_FILE_DATA
+};
+
 /* Struct: struct fann_train_data
 	Structure used to store data, for use with training.
 	
@@ -61,6 +75,10 @@ struct fann_train_data
 	unsigned int num_output;
 	fann_type **input;
 	fann_type **output;
+
+    char **file;
+    enum fann_in_file_data_format_enum *file_format;
+    unsigned int num_file;
 };
 
 /* Section: FANN Training */
@@ -334,6 +352,19 @@ FANN_EXTERNAL struct fann_train_data * FANN_API fann_create_train_from_callback(
                                                                  fann_type * ,
                                                                  fann_type * ));
 
+/* Function: fann_create_train_from_in_file_data
+   Creates the training data struct from a file, without loading it to memory.
+   
+   Parameters:
+     configuration_file     - training data file name
+     format                 - format of the training data file
+
+   See also:
+     <fann_in_file_data_format_enum>
+
+    This function appears in FANN > 2.2
+*/
+FANN_EXTERNAL struct fann_train_data *fann_create_train_from_in_file_data(const char *configuration_file, enum fann_in_file_data_format_enum format);
 /* Function: fann_destroy_train
    Destructs the training data and properly deallocates all of the associated data.
    Be sure to call this function when finished using the training data.
@@ -372,7 +403,6 @@ FANN_EXTERNAL fann_type * FANN_API fann_get_train_output(struct fann_train_data 
  */ 
 FANN_EXTERNAL void FANN_API fann_shuffle_train_data(struct fann_train_data *train_data);
 
-#ifndef FIXEDFANN
 
 /* Function: fann_get_min_train_input
 
@@ -406,6 +436,7 @@ FANN_EXTERNAL fann_type FANN_API fann_get_min_train_output(struct fann_train_dat
 */
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_output(struct fann_train_data *train_data);
 
+#ifndef FIXEDFANN
 
 /* Function: fann_scale_train
 

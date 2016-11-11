@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <math.h>
 
 #include "config.h"
 #include "fann.h"
@@ -67,6 +68,7 @@ FANN_EXTERNAL int FANN_API fann_save_train_to_fixed(struct fann_train_data *data
  */
 FANN_EXTERNAL void FANN_API fann_destroy_train(struct fann_train_data *data)
 {
+    unsigned int i;
 	if(data == NULL)
 		return;
 	if(data->input != NULL)
@@ -75,6 +77,10 @@ FANN_EXTERNAL void FANN_API fann_destroy_train(struct fann_train_data *data)
 		fann_safe_free(data->output[0]);
 	fann_safe_free(data->input);
 	fann_safe_free(data->output);
+    for(i = 0; i < data->num_file; i++)
+        fann_safe_free(data->file[i]);
+    fann_safe_free(data->file);
+    fann_safe_free(data->file_format);
 	fann_safe_free(data);
 }
 
@@ -113,13 +119,7 @@ float fann_train_epoch_quickprop(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_quickprop(ann, data->num_data, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -139,14 +139,7 @@ float fann_train_epoch_irpropm(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_irpropm(ann, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -166,14 +159,7 @@ float fann_train_epoch_sarprop(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_sarprop(ann, ann->sarprop_epoch, 0, ann->total_connections);
 
 	++(ann->sarprop_epoch);
@@ -190,14 +176,7 @@ float fann_train_epoch_batch(struct fann *ann, struct fann_train_data *data)
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i < data->num_data; i++)
-	{
-		fann_run(ann, data->input[i]);
-		fann_compute_MSE(ann, data->output[i]);
-		fann_backpropagate_MSE(ann);
-		fann_update_slopes_batch(ann, ann->first_layer + 1, ann->last_layer - 1);
-	}
-
+    fann_apply_strategy_to_data(ann, data, fann_default_train_strategy);
 	fann_update_weights_batch(ann, data->num_data, 0, ann->total_connections);
 
 	return fann_get_MSE(ann);
@@ -212,12 +191,146 @@ float fann_train_epoch_incremental(struct fann *ann, struct fann_train_data *dat
 
 	fann_reset_MSE(ann);
 
-	for(i = 0; i != data->num_data; i++)
-	{
-		fann_train(ann, data->input[i], data->output[i]);
-	}
+    fann_apply_strategy_to_data(ann, data, fann_train);
 
 	return fann_get_MSE(ann);
+}
+
+/* INTERNAL FUNCTION
+   Apply strategy function for each (input, output) data
+ */
+void fann_apply_strategy_to_data(struct fann *ann, struct fann_train_data *data, void (*strategy)( struct fann *, fann_type *, fann_type *))
+{
+    unsigned int fidx;
+    unsigned int didx;
+    unsigned int i;
+    unsigned int j;
+
+    fann_type *input;
+    fann_type *output;
+
+    if(data->input != NULL && data->output != NULL)
+    {
+        for(i = 0; i < data->num_data; i++)
+            strategy(ann, data->input[i], data->output[i]);
+
+        return;
+    }
+    else if(data->num_file == 0)
+        return;
+
+    input = (fann_type *) calloc(data->num_input, sizeof(fann_type));
+    if(input == NULL)
+    {
+        fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+        return;
+    }
+    output = (fann_type *) calloc(data->num_output, sizeof(fann_type));
+    if(output == NULL)
+    {
+        fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+        free(input);
+        return;
+    }
+
+    for(fidx = 0; fidx < data->num_file; fidx++)
+    {
+        FILE *file;
+        if(data->file_format[fidx] == FANN_TEXT_FORMAT_IN_FILE_DATA)
+        {
+            unsigned int dummy_a, dummy_b, dummy_c;
+            file = fopen(data->file[fidx], "r");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                free(input);
+                free(output);
+                return;
+            }
+            if(fscanf(file, "%u %u %u\n", &dummy_a, &dummy_b, &dummy_c) != 3)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                free(input);
+                free(output);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &input[j]) != 1)
+                    {
+                        fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                        free(input);
+                        free(output);
+                        fclose(file);
+                        return;
+                    }
+                }
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &output[i]) != 1)
+                    {
+                        fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                        free(input);
+                        free(output);
+                        fclose(file);
+                        return;
+                    }
+                }
+            }
+
+            strategy(ann, input, output);
+        }
+        else if(data->file_format[fidx] == FANN_BINARY_FORMAT_IN_FILE_DATA)
+        {
+            file = fopen(data->file[fidx], "rb");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                free(input);
+                free(output);
+                return;
+            }
+            if(fseek(file, sizeof(unsigned int) * 3, SEEK_SET) != 0)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                free(input);
+                free(output);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                if(fread(input, sizeof(fann_type), data->num_input, file) != data->num_input)
+                {
+                    fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    free(input);
+                    free(output);
+                    fclose(file);
+                    return;
+                }
+                if(fread(output, sizeof(fann_type), data->num_output, file) != data->num_output)
+                {
+                    fann_error(NULL, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    free(input);
+                    free(output);
+                    fclose(file);
+                    return;
+                }
+
+                strategy(ann, input, output);
+            }
+        }
+
+        fclose(file);
+    }
+
+    free(input);
+    free(output);
 }
 
 /*
@@ -365,33 +478,195 @@ void fann_get_min_max_data(fann_type ** data, unsigned int num_data, unsigned in
 	}
 }
 
+/*
+ * INTERNAL FUNCTION calculates min and max of in-file train data
+ */
+void fann_get_min_max_in_file_data(struct fann_train_data *data, fann_type *input_min, fann_type *input_max, fann_type *output_min, fann_type *output_max)
+{
+    unsigned int fidx;
+    unsigned int didx;
+
+    *input_min = (fann_type)INFINITY;
+    *input_max = (fann_type)-INFINITY;
+    *output_min = (fann_type)INFINITY;
+    *output_max = (fann_type)-INFINITY;
+
+    for(fidx = 0; fidx < data->num_file; fidx++)
+    {
+        FILE *file;
+
+        if(data->file_format[fidx] == FANN_TEXT_FORMAT_IN_FILE_DATA)
+        {
+            unsigned int dummy_a, dummy_b, dummy_c;
+            fann_type value;
+            unsigned int j;
+
+            file = fopen(data->file[fidx], "r");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                return;
+            }
+            if(fscanf(file, "%u %u %u\n", &dummy_a, &dummy_b, &dummy_c) != 3)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &value) != 1)
+                    {
+                        fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx * 2);
+                        fclose(file);
+                        return;
+                    }
+
+                    if(value < *input_min)
+                        *input_min = value;
+                    else if(*input_max < value)
+                        *input_max = value;
+                }
+
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(fscanf(file, FANNSCANF " ", &value) != 1)
+                    {
+                        fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx * 2 + 1);
+                        fclose(file);
+                        return;
+                    }
+
+                    if(value < *output_min)
+                        *output_min = value;
+                    else if(*output_max < value)
+                        *output_max = value;
+                }
+            }
+
+            fclose(file);
+        }
+        else if(data->file_format[fidx] == FANN_BINARY_FORMAT_IN_FILE_DATA)
+        {
+            fann_type *input;
+            fann_type *output;
+            unsigned int j;
+
+            file = fopen(data->file[fidx], "rb");
+            if(file == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_OPEN_TD_R);
+                return;
+            }
+            if(fseek(file, sizeof(unsigned int) * 3, SEEK_SET) != 0)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], 1);
+                fclose(file);
+                return;
+            }
+
+            input = (fann_type *) calloc(data->num_input, sizeof(fann_type));
+            if(input == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+                fclose(file);
+                return;
+            }
+
+            output = (fann_type *) calloc(data->num_output, sizeof(fann_type));
+            if(output == NULL)
+            {
+                fann_error((struct fann_error *)data, FANN_E_CANT_ALLOCATE_MEM);
+                free(input);
+                fclose(file);
+                return;
+            }
+
+            for(didx = 0; didx < data->num_data; didx++)
+            {
+                if(fread((char *)input, sizeof(fann_type), data->num_input, file) != data->num_input)
+                {
+                    fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    fclose(file);
+                    free(input);
+                    free(output);
+                    return;
+                }
+
+                if(fread((char *)output, sizeof(fann_type), data->num_output, file) != data->num_output)
+                {
+                    fann_error((struct fann_error *)data, FANN_E_CANT_READ_TD, data->file[fidx], didx);
+                    fclose(file);
+                    free(input);
+                    free(output);
+                    return;
+                }
+
+                for(j = 0; j < data->num_input; j++)
+                {
+                    if(input[j] < *input_min)
+                        *input_min = input[j];
+                    else if(*input_max < input[j])
+                        *input_max = input[j];
+                }
+
+                for(j = 0; j < data->num_output; j++)
+                {
+                    if(output[j] < *output_min)
+                        *output_min = output[j];
+                    else if(*output_max < output[j])
+                        *output_max = output[j];
+                }
+            }
+
+            free(input);
+            free(output);
+            fclose(file);
+        }
+    }
+}
 
 FANN_EXTERNAL fann_type FANN_API fann_get_min_train_input(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &min, &max);
-    return min;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &input_min, &input_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return input_min;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_input(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &min, &max);
-    return max;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->input, train_data->num_data, train_data->num_input, &input_min, &input_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return input_max;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_min_train_output(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &min, &max);
-    return min;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &output_min, &output_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return output_min;
 }
 
 FANN_EXTERNAL fann_type FANN_API fann_get_max_train_output(struct fann_train_data *train_data)
 {
-    fann_type min, max;
-    fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &min, &max);
-    return max;
+    fann_type input_min, input_max, output_min, output_max;
+    if(train_data->input != NULL && train_data->output != NULL)
+        fann_get_min_max_data(train_data->output, train_data->num_data, train_data->num_output, &output_min, &output_max);
+    else if(train_data->num_file != 0)
+        fann_get_min_max_in_file_data(train_data, &input_min, &input_max, &output_min, &output_max);
+    return output_max;
 }
 
 /*
@@ -487,9 +762,11 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_merge_train_data(struct fann
 {
 	unsigned int i;
 	fann_type *data_input, *data_output;
-	struct fann_train_data *dest =
-		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	struct fann_train_data *dest = fann_merge_in_file_data(data1, data2);
+    if(dest != NULL)
+        return dest;
 
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
 	if(dest == NULL)
 	{
 		fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
@@ -557,6 +834,75 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_merge_train_data(struct fann
 }
 
 /*
+ * INTERNAL FUNCTION Merges in-file data into a single struct
+ */
+struct fann_train_data *fann_merge_in_file_data(struct fann_train_data *data1, struct fann_train_data *data2)
+{
+    struct fann_train_data *dest;
+
+    if(data1->input != NULL || data1->output != NULL || data2->input != NULL || data2->output != NULL)
+        return NULL;
+    if (data1->num_file == 0 && data2->num_file == 0)
+        return NULL;
+
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	if(dest == NULL)
+	{
+		fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) dest);
+	dest->error_log = data1->error_log;
+
+    dest->num_file = data1->num_file+data2->num_file;
+    if(dest->num_file == 0)
+    {
+        dest->file = NULL;
+        dest->file_format = NULL;
+        return dest;
+    }
+
+    dest->file = (char **) calloc(dest->num_file, sizeof(char *));
+    if(dest->file == NULL)
+    {
+        fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+        fann_destroy_train(dest);
+        return NULL;
+    }
+
+    dest->file_format = (enum fann_in_file_data_format_enum *) calloc(dest->num_file, sizeof(enum fann_in_file_data_format_enum));
+    if(dest->file_format == NULL)
+    {
+        fann_error((struct fann_error*)data1, FANN_E_CANT_ALLOCATE_MEM);
+        fann_destroy_train(dest);
+        return NULL;
+    }
+
+    if(data1->num_file != 0)
+    {
+        unsigned int i;
+        for(i = 0; i < data1->num_file; i++)
+        {
+            dest->file[i] = (char *) calloc(strlen(data1->file[i]) + 1, sizeof(char));
+            strcpy(dest->file[i], data1->file[i]);
+        }
+        memcpy(dest->file_format, data1->file_format, data1->num_file * sizeof(enum fann_in_file_data_format_enum));
+    }
+    if(data2->num_file != 0)
+    {
+        unsigned int i;
+        for(i = 0; i < data2->num_file; i++)
+        {
+            dest->file[data1->num_file + i] = (char *) calloc(strlen(data2->file[i]) + 1, sizeof(char));
+            strcpy(dest->file[data1->num_file + i], data2->file[i]);
+        }
+        memcpy(dest->file_format + data1->num_file, data2->file_format, data2->num_file * sizeof(enum fann_in_file_data_format_enum));
+    }
+    return dest;
+}
+
+/*
  * return a copy of a fann_train_data struct 
  */
 FANN_EXTERNAL struct fann_train_data *FANN_API fann_duplicate_train_data(struct fann_train_data
@@ -564,9 +910,11 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_duplicate_train_data(struct 
 {
 	unsigned int i;
 	fann_type *data_input, *data_output;
-	struct fann_train_data *dest =
-		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	struct fann_train_data *dest = fann_duplicate_in_file_data(data);
+    if(dest != NULL)
+        return dest;
 
+	dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
 	if(dest == NULL)
 	{
 		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
@@ -621,6 +969,67 @@ FANN_EXTERNAL struct fann_train_data *FANN_API fann_duplicate_train_data(struct 
 		data_output += dest->num_output;
 	}
 	return dest;
+}
+
+/*
+ * INTERNAL FUNCTION return a copy of a fann_train_data struct (in-file data)
+ */
+struct fann_train_data *fann_duplicate_in_file_data(struct fann_train_data *data)
+{
+    unsigned int i;
+	struct fann_train_data *dest;
+
+    if(data->input != NULL || data->output != NULL)
+        return NULL;
+
+    dest = (struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+	if(dest == NULL)
+	{
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) dest);
+	dest->error_log = data->error_log;
+
+	dest->num_data = data->num_data;
+	dest->num_input = data->num_input;
+	dest->num_output = data->num_output;
+    dest->input = NULL;
+    dest->output = NULL;
+
+    if(data->num_file == 0)
+    {
+        dest->file = NULL;
+        dest->file_format = NULL;
+        dest->num_file = 0;
+        return dest;
+    }
+
+    dest->file = (char **) calloc(data->num_file, sizeof(char *));
+    if(dest->file == NULL)
+    {
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		fann_destroy_train(dest);
+		return NULL;
+    }
+
+    dest->file_format = (enum fann_in_file_data_format_enum *) calloc(data->num_file, sizeof(enum fann_in_file_data_format_enum));
+    if(dest->file_format == NULL)
+    {
+		fann_error((struct fann_error*)data, FANN_E_CANT_ALLOCATE_MEM);
+		fann_destroy_train(dest);
+		return NULL;
+    }
+
+    dest->num_file = data->num_file;
+    for(i = 0; i < data->num_file; i++)
+    {
+        dest->file[i] = (char *) calloc(strlen(data->file[i]) + 1, sizeof(char));
+        strcpy(dest->file[i], data->file[i]);
+    }
+    memcpy(dest->file_format, data->file_format, data->num_file * sizeof(enum fann_in_file_data_format_enum));
+    return dest;
 }
 
 FANN_EXTERNAL struct fann_train_data *FANN_API fann_subset_train_data(struct fann_train_data
@@ -863,6 +1272,10 @@ FANN_EXTERNAL struct fann_train_data * FANN_API fann_create_train(unsigned int n
 		data->output[i] = data_output;
 		data_output += num_output;
 	}
+
+    data->file = NULL;
+    data->file_format = NULL;
+    data->num_file = 0;
 	return data;
 }
 
@@ -929,6 +1342,106 @@ FANN_EXTERNAL struct fann_train_data * FANN_API fann_create_train_from_callback(
 
     return data;
 } 
+
+FANN_EXTERNAL struct fann_train_data *fann_create_train_from_in_file_data(const char *configuration_file, enum fann_in_file_data_format_enum format)
+{
+	unsigned int i;
+	struct fann_train_data *data =
+		(struct fann_train_data *) malloc(sizeof(struct fann_train_data));
+
+	if(data == NULL)
+	{
+		fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+		return NULL;
+	}
+
+	fann_init_error_data((struct fann_error *) data);
+
+    data->input = NULL;
+    data->output = NULL;
+
+    data->file = (char **) malloc(sizeof(char *));
+    if(data->file == NULL)
+    {
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+
+    data->file[0] = (char *) calloc(strlen(configuration_file) + 1, sizeof(char));
+    if(data->file[0] == NULL)
+    {
+        free(data->file);
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+    strcpy(data->file[0], configuration_file);
+
+    data->file_format = (enum fann_in_file_data_format_enum *) malloc(sizeof(enum fann_in_file_data_format_enum));
+    if(data->file_format == NULL)
+    {
+        free(data->file[0]);
+        free(data->file);
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_ALLOCATE_MEM);
+        return NULL;
+    }
+
+    data->file_format[0] = format;
+    data->num_file = 1;
+
+    if(format == FANN_TEXT_FORMAT_IN_FILE_DATA)
+    {
+        FILE *file = fopen(configuration_file, "r");
+        if(file == NULL)
+        {
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+            return NULL;
+        }
+
+        if(fscanf(file, "%u %u %u\n", &data->num_data, &data->num_input, &data->num_output) != 3)
+        {
+            fclose(file);
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_READ_TD, configuration_file, 1);
+            return NULL;
+        }
+
+        fclose(file);
+    }
+    else if (format == FANN_BINARY_FORMAT_IN_FILE_DATA)
+    {
+        FILE *file = fopen(configuration_file, "rb");
+        if(file == NULL)
+        {
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+            return NULL;
+        }
+
+        if(fread((char *)&data->num_data, sizeof(unsigned int), 1, file) != 1
+           || fread((char *)&data->num_input, sizeof(unsigned int), 1, file) != 1
+           || fread((char *)&data->num_output, sizeof(unsigned int), 1, file) != 1)
+        {
+            fclose(file);
+            fann_destroy_train(data);
+            fann_error(NULL, FANN_E_CANT_READ_TD, configuration_file, 1);
+            return NULL;
+        }
+
+        fclose(file);
+    }
+    else
+    {
+        fann_destroy_train(data);
+        fann_error(NULL, FANN_E_CANT_OPEN_CONFIG_R);
+        return NULL;
+    }
+
+    return data;
+}
 
 FANN_EXTERNAL fann_type * FANN_API fann_get_train_input(struct fann_train_data * data, unsigned int position)
 {

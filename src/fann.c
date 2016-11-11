@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "fann.h"
+#include "fann_train.h"
 
 /* #define FANN_NO_SEED */
 
@@ -1177,16 +1178,8 @@ FANN_EXTERNAL void FANN_API fann_init_weights(struct fann *ann, struct fann_trai
 #endif
 	float scale_factor;
 
-	for(smallest_inp = largest_inp = train_data->input[0][0]; dat < train_data->num_data; dat++)
-	{
-		for(elem = 0; elem < train_data->num_input; elem++)
-		{
-			if(train_data->input[dat][elem] < smallest_inp)
-				smallest_inp = train_data->input[dat][elem];
-			if(train_data->input[dat][elem] > largest_inp)
-				largest_inp = train_data->input[dat][elem];
-		}
-	}
+    smallest_inp = fann_get_min_train_input(train_data);
+    largest_inp = fann_get_max_train_input(train_data);
 
 	num_hidden_neurons = (unsigned int)(
 		ann->total_neurons - (ann->num_input + ann->num_output +

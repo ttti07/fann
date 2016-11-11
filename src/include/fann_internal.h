@@ -84,6 +84,9 @@ void fann_backpropagate_MSE(struct fann *ann);
 void fann_update_weights(struct fann *ann);
 void fann_update_slopes_batch(struct fann *ann, struct fann_layer *layer_begin,
 							  struct fann_layer *layer_end);
+void fann_default_train_strategy(struct fann *ann, fann_type *input, fann_type *output);
+void fann_apply_strategy_to_data(struct fann *ann, struct fann_train_data *data,
+                                void (*strategy)( struct fann *, fann_type *, fann_type *));
 void fann_update_weights_quickprop(struct fann *ann, unsigned int num_data,
 								   unsigned int first_weight, unsigned int past_end);
 void fann_update_weights_batch(struct fann *ann, unsigned int num_data, unsigned int first_weight,
@@ -123,6 +126,10 @@ int fann_allocate_scale(struct fann *ann);
 
 FANN_EXTERNAL void FANN_API fann_scale_data_to_range(fann_type ** data, unsigned int num_data, unsigned int num_elem,
 					 fann_type old_min, fann_type old_max, fann_type new_min, fann_type new_max);
+
+struct fann_train_data *fann_merge_in_file_data(struct fann_train_data *data1, struct fann_train_data *data2);
+
+struct fann_train_data *fann_duplicate_in_file_data(struct fann_train_data *data);
 
 /* called fann_max, in order to not interferre with predefined versions of max */
 #define fann_max(x, y) (((x) > (y)) ? (x) : (y))
